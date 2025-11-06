@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useDispatch } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import api from '../../api/axios'
@@ -31,6 +31,14 @@ const SignupPage = () => {
 
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const user = useSelector((state) => state.auth.user);
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user) {
+      navigate('/feed', { replace: true });
+    }
+  }, [user, navigate]);
 
   const onSubmit = async (formData) => {
     const { confirmPassword, ...dataToSend } = formData;

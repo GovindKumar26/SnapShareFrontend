@@ -206,11 +206,170 @@ This section records the exact step-by-step events, the runtime or build errors 
   
   **Result:** Cross-origin authentication now works correctly. Cookies are set with proper attributes and sent with requests from localhost to render.com domain.
 
+- Nov 6, 2025 — **LoginPage Implementation:** Built the login page with username/email + password authentication. Features:
+  - Single `identifier` field accepts both username OR email
+  - Zod validation (simple required field validation)
+  - react-hook-form integration
+  - Transforms `identifier` into both `username` and `email` before sending to backend (backend's `$or` query matches whichever is correct)
+  - API call to `POST /login`
+  - Redux dispatch on success
+  - Navigation to `/feed` after successful login
+  - Toast notifications for success/error
+  - Loading state on button ("Logging in..." text)
+  - Link to signup page for new users
+  - Matches indigo-purple gradient design system
+  - Status: ✅ Complete and functional
+
+- Nov 6, 2025 — **Session Persistence Implementation:** Added automatic session restoration when app loads/refreshes. Without this, Redux state resets on refresh even though cookies persist, making users appear logged out. Solution:
+  
+  **Backend Changes:**
+  - Created `controller/getCurrentUser.js` - Returns current user based on JWT cookie
+  - Added route: `GET /api/auth/me` with `verifyToken` middleware
+  - Endpoint verifies cookie, fetches user from database, returns user data (without password)
+  
+  **Frontend Changes:**
+  - Created `features/auth/AuthProvider.jsx` component
+  - On mount, calls `/api/auth/me` to check for existing session
+  - If valid cookie exists → dispatches user to Redux
+  - If no cookie/invalid → leaves Redux empty (user stays null)
+  - Shows loading spinner during auth check (better UX than flash of logged-out state)
+  - Wraps entire app in `main.jsx` to run before routes render
+  
+  **Updated Provider Hierarchy:**
+  ```jsx
+  <Provider store={store}>           // Redux
+    <QueryClientProvider>            // TanStack Query
+      <AuthProvider>                 // Session check (NEW)
+        <RouterProvider>             // Routes
+          <Toaster />                // Notifications
+        </RouterProvider>
+      </AuthProvider>
+    </QueryClientProvider>
+  </Provider>
+  ```
+  
+  **How It Works:**
+  - First visit: User logs in → cookies set → Redux updated
+  - After refresh: AuthProvider calls `/api/auth/me` → backend verifies cookie → returns user → Redux restored
+  - Cookie expired/logged out: API returns 401 → AuthProvider does nothing → Redux stays empty
+  - **Result:** One API call per page load (~100-200ms) to verify session and restore state. Cookies persist in browser, this just syncs Redux with cookie state.
+
+- Nov 7, 2025 — **Protected Routes Implementation:** Added client-side route protection to prevent unauthorized access to authenticated pages. Without this, users could navigate to protected pages and see errors when API calls fail. Solution:
+  
+  **Frontend Changes:**
+  - Created `components/ProtectedRoute.jsx` component
+  - Uses Redux selector to check if user exists
+  - If no user → instant redirect to `/login` (before page renders)
+  - If user exists → renders the protected page (children)
+  - Uses `replace` prop to prevent back button from returning to protected page
+  
+  **Protected Routes:**
+  - `/feed` - Main feed page (wrapped in ProtectedRoute)
+  - `/signup/complete` - Profile completion page (wrapped in ProtectedRoute)
+  - Future: `/profile/:username`, `/settings`, `/post/create`, etc.
+  
+  **Public Routes (no protection):**
+  - `/signup` - Anyone can sign up
+  - `/login` - Anyone can log in
+  - `/` - Redirects to signup (public landing)
+  
+  **Usage Pattern:**
+  ```jsx
+  // In AppRoutes.jsx
+  { 
+    path: "/feed", 
+    element: (
+      <ProtectedRoute>
+        <FeedPage />
+      </ProtectedRoute>
+    )
+  }
+  ```
+  
+  **How It Works:**
+  1. User navigates to protected route (e.g., `/feed`)
+  2. AuthProvider has already restored Redux state (if valid session exists)
+  3. ProtectedRoute checks Redux for user
+  4. No user? → Redirect to `/login` instantly (page never renders)
+  5. User exists? → Render the protected page
+  
+  **Created FeedPage Stub:**
+  - Simple page displaying logged-in user's name
+  - Placeholder for future feed content
+  - Demonstrates protected route working correctly
+  
+  **Result:** Clean UX with instant redirects, no wasted API calls, no flash of unauthorized content.
+
+- Nov 7, 2025 — **Logout Functionality Implementation:** Added complete logout flow to clear session and redirect users. Solution:
+  
+  **Frontend Changes:**
+  - Added logout button to FeedPage (red button in top-right corner)
+  - Implemented `handleLogout` function that:
+    1. Calls backend `POST /logout` to clear cookies
+    2. Dispatches `logout()` action to clear Redux state
+    3. Shows success toast notification
+    4. Redirects to `/login` page
+  - Error handling: Even if backend call fails, clears local state and redirects
+  
+  **Backend Fix - Cookie Clearing Issue:**
+  - **Problem Discovered:** `res.clearCookie()` was missing the same options used when setting cookies
+  - Browser requires **exact same options** (httpOnly, secure, sameSite) to recognize and delete the cookie
+  - Without matching options, cookies weren't being cleared, causing session to restore on refresh
+  
+  **Backend Solution:**
+  - Updated `controller/logout.js` to include cookie options:
+    ```javascript
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+    };
+    res.clearCookie("accessToken", cookieOptions);
+    res.clearCookie("refreshToken", cookieOptions);
+    ```
+  - Options now match those used in `register.js` and `login.js`
+  
+  **How It Works:**
+  1. User clicks Logout button
+  2. Backend clears cookies with correct options → Cookies deleted
+  3. Redux state cleared
+  4. User redirected to `/login`
+  5. On refresh: AuthProvider finds no cookies → Session NOT restored
+  6. User stays logged out correctly
+  
+  **Result:** Logout now works properly - cookies cleared, session ended, no auto-restore on refresh.
+
+- Nov 7, 2025 — **Auth Page Redirect Logic:** Added automatic redirect for logged-in users trying to access login/signup pages. Prevents confusion when authenticated users navigate to auth pages.
+  
+  **Frontend Changes:**
+  - Added useEffect to `LoginPage.jsx` and `SignupPage.jsx`
+  - Checks Redux for user on component mount
+  - If user exists → redirect to `/feed` with `replace: true`
+  - Uses `replace` to prevent back button from returning to auth pages
+  
+  **Code Pattern:**
+  ```jsx
+  const user = useSelector((state) => state.auth.user);
+  
+  useEffect(() => {
+    if (user) {
+      navigate('/feed', { replace: true });
+    }
+  }, [user, navigate]);
+  ```
+  
+  **Scenarios Handled:**
+  1. Logged-in user manually types `/login` in URL → Auto-redirect to `/feed`
+  2. Logged-in user refreshes on `/login` → AuthProvider restores session → Auto-redirect to `/feed`
+  3. Logged-out user accesses `/login` → Stays on login page (correct)
+  
+  **Result:** Logged-in users can't access auth pages, preventing double login attempts and confusion.
+
 - Nov 5, 2025 — **Routes Configuration:** Updated `AppRoutes.jsx` to include `/signup/complete` route pointing to `<SignupCompletePage/>`. Full routing structure:
   - `/` → redirects to `/signup`
   - `/signup` → SignupPage (fully functional)
-  - `/signup/complete` → SignupCompletePage (UI complete)
-  - `/login` → LoginPage (stub only)
+  - `/signup/complete` → SignupCompletePage (fully functional)
+  - `/login` → LoginPage (fully functional)
 
 **Notes:** entries above are recorded in the order encountered; each list item includes the observed error/message, root cause, and the fix applied so a future developer can trace what was changed and why.
 
@@ -334,6 +493,180 @@ res.cookie("accessToken", token, {
 
 ---
 
+### AuthProvider vs ProtectedRoute
+
+**The Confusion:** Both seem to check authentication. Why do we need both?
+
+**The Answer:** They serve completely different purposes in the auth flow.
+
+#### AuthProvider (`features/auth/AuthProvider.jsx`)
+
+**Purpose:** Restore session state when app loads
+
+**What it does:**
+- Wraps entire app ONCE in `main.jsx`
+- Runs on app mount (when page first loads or refreshes)
+- Calls `/api/auth/me` to check if user has valid session
+- If valid cookie exists → dispatches user to Redux
+- If no/invalid cookie → does nothing (Redux stays empty)
+- Shows loading spinner while checking
+
+**What it does NOT do:**
+- ❌ Doesn't prevent route access
+- ❌ Doesn't redirect users
+- ❌ Doesn't protect pages
+
+**When it runs:**
+- On every page load/refresh
+- Before routes render
+
+**Wrapping pattern:**
+```jsx
+// main.jsx - Wraps EVERYTHING once
+<AuthProvider>
+  <RouterProvider router={router} />
+</AuthProvider>
+```
+
+**Example flow:**
+1. User refreshes page
+2. AuthProvider calls `/api/auth/me`
+3. Valid cookie? → Restore user to Redux
+4. No cookie? → Redux stays empty
+5. Then routes render
+
+---
+
+#### ProtectedRoute (`components/ProtectedRoute.jsx`)
+
+**Purpose:** Guard individual routes from unauthorized access
+
+**What it does:**
+- Wraps specific routes individually in `AppRoutes.jsx`
+- Checks Redux for user (synchronous, instant)
+- If no user → redirects to `/login` (before rendering page)
+- If user exists → renders the protected page
+- Runs every time you navigate to a protected route
+
+**What it does NOT do:**
+- ❌ Doesn't fetch user data
+- ❌ Doesn't call APIs
+- ❌ Doesn't restore sessions
+
+**When it runs:**
+- Every time you navigate to a protected route
+- After AuthProvider has already run
+
+**Wrapping pattern:**
+```jsx
+// AppRoutes.jsx - Wraps EACH protected route
+{ 
+  path: "/feed", 
+  element: <ProtectedRoute><FeedPage /></ProtectedRoute> 
+}
+{ 
+  path: "/profile", 
+  element: <ProtectedRoute><ProfilePage /></ProtectedRoute> 
+}
+// Public routes don't need wrapping
+{ path: "/login", element: <LoginPage /> }
+```
+
+**Example flow:**
+1. User navigates to `/feed`
+2. ProtectedRoute checks Redux
+3. No user? → Redirect to `/login` instantly
+4. Has user? → Render FeedPage
+
+---
+
+#### Side-by-Side Comparison
+
+| Feature | AuthProvider | ProtectedRoute |
+|---------|-------------|----------------|
+| **Purpose** | Restore session state | Guard routes |
+| **Where used** | `main.jsx` (once) | `AppRoutes.jsx` (per route) |
+| **Wraps** | Entire app | Individual routes |
+| **Runs** | On app load/refresh | On route navigation |
+| **API calls** | Yes (`/api/auth/me`) | No |
+| **Checks** | Cookie validity | Redux state |
+| **Speed** | ~100-200ms (async) | Instant (sync) |
+| **Action if no auth** | Does nothing | Redirects to `/login` |
+| **Action if authenticated** | Dispatches to Redux | Renders children |
+| **Loading state** | Shows spinner | No loading needed |
+
+---
+
+#### Why We Need BOTH
+
+**Without AuthProvider:**
+- User refreshes page → Redux resets → appears logged out
+- Even though cookies are still valid!
+- ProtectedRoute sees no user → redirects to login
+- Bad UX: logged-in user forced to log in again
+
+**Without ProtectedRoute:**
+- User can navigate to `/feed` without logging in
+- Page starts rendering
+- API calls fire → backend rejects (401)
+- User sees error message
+- Bad UX: page loads then errors
+
+**With BOTH:**
+1. ✅ AuthProvider restores session on refresh
+2. ✅ ProtectedRoute prevents unauthorized page access
+3. ✅ Clean UX with instant feedback
+4. ✅ No wasted API calls
+5. ✅ Sessions persist across refreshes
+
+---
+
+#### The Complete Auth Flow
+
+**Scenario: User refreshes page on `/feed`**
+
+```
+1. App loads → AuthProvider wraps everything
+   ↓
+2. AuthProvider calls /api/auth/me
+   ↓ (100-200ms delay)
+3a. Valid cookie → Dispatch user to Redux
+   ↓
+4a. Router navigates to /feed
+   ↓
+5a. ProtectedRoute checks Redux → User exists ✅
+   ↓
+6a. FeedPage renders
+
+3b. No/invalid cookie → Redux stays empty
+   ↓
+4b. Router tries to navigate to /feed
+   ↓
+5b. ProtectedRoute checks Redux → No user ❌
+   ↓
+6b. Redirect to /login
+```
+
+---
+
+#### Analogy
+
+**AuthProvider** = Security desk at building entrance
+- Checks your ID badge when you enter
+- Restores your access credentials
+- Runs once when you arrive
+
+**ProtectedRoute** = Locked doors throughout building
+- Each floor/room checks if you have valid badge
+- Instantly denies access if no badge
+- Runs every time you try to enter a room
+
+You need both:
+- Security desk restores your badge
+- Locked doors verify you have it
+
+---
+
 ## Decisions & Architecture
 
 ### State Management Strategy
@@ -344,6 +677,80 @@ res.cookie("accessToken", token, {
 - User login/signup: one-time action → store result in Redux
 - Posts/comments/likes: frequently changing server data → cache with TanStack Query
 - Avoids N+1 queries, automatic refetching, optimistic updates
+
+### Why Use Redux for User State?
+
+**The Question:** Since backend validates all requests with JWT cookies and protected routes are enforced server-side, why store user in Redux at all?
+
+**The Answer:** Redux is for **frontend convenience and UX**, not security.
+
+#### What Redux Does NOT Provide:
+- ❌ API Security (backend handles with cookies + middleware)
+- ❌ Data protection (backend is the real gatekeeper)
+- ❌ Authorization enforcement (backend rejects unauthorized requests)
+
+#### What Redux DOES Provide:
+
+**1. Prevents Wasted API Calls**
+```jsx
+// Without Redux: Every component fetches current user
+function Navbar() {
+  const { data: user } = useQuery('currentUser', fetchMe); // API call
+}
+function Sidebar() {
+  const { data: user } = useQuery('currentUser', fetchMe); // Same call again!
+}
+
+// With Redux: Fetch once, use everywhere
+function Navbar() {
+  const user = useSelector(state => state.auth.user); // Instant, no API call
+}
+```
+
+**2. Instant Client-Side Route Protection**
+```jsx
+// Without Redux:
+// User navigates to /feed → Page loads → API call fires → Backend rejects (401)
+// → Error shown → Redirect to login
+// BAD UX: Page flash, wasted request, slow feedback
+
+// With Redux:
+// User navigates to /feed → ProtectedRoute checks Redux → No user? Instant redirect
+// GOOD UX: No page flash, no wasted API call, instant feedback
+```
+
+**3. Conditional UI Rendering**
+```jsx
+{user ? <CreatePostButton /> : <LoginPrompt />}
+{user?.id === post.authorId && <DeleteButton />}
+<Avatar src={user?.avatarUrl} />
+<span>Welcome, {user?.username}</span>
+```
+
+#### Could You Skip Redux?
+
+**Yes!** You could use TanStack Query for user state:
+```jsx
+const { data: user } = useQuery({
+  queryKey: ['currentUser'],
+  queryFn: fetchMe,
+  staleTime: Infinity, // Cache forever
+});
+```
+
+TanStack Query caches globally, so you only fetch once. But:
+- Still need to handle loading states in every component
+- Protected routes would need async checks (slower UX)
+- More boilerplate for auth-specific logic
+
+#### Our Approach:
+- **Redux for auth state** (simple, synchronous, instant access)
+- **TanStack Query for server data** (posts, comments, likes - frequently changing)
+- **Backend for security** (real enforcement, Redux is just a UX layer)
+
+**Key Insight:** Redux prevents unnecessary API calls and provides instant feedback. Backend is still the bouncer - Redux is just a faster bouncer at the door.
+
+---
 
 ### Router Choice
 - Using `createBrowserRouter` (React Router v6.4+)
@@ -359,14 +766,14 @@ res.cookie("accessToken", token, {
 ### Current Routes
 ```
 / → redirects to /signup
-/signup → SignupPage (functional with validation)
-/signup/complete → SignupCompletePage (UI complete)
-/login → LoginPage (stub)
+/signup → SignupPage (fully functional)
+/signup/complete → SignupCompletePage (fully functional)
+/login → LoginPage (fully functional)
 ```
 
 ---
 
-## 📊 Frontend Review Summary (November 5, 2025)
+## 📊 Frontend Review Summary (November 6, 2025)
 
 ### ✅ Completed & Working
 1. **Core Setup**: Vite, React 19, all dependencies installed
@@ -391,31 +798,76 @@ res.cookie("accessToken", token, {
    - Skip/Save actions with loading states
    - Toast notifications
    - Matches design system
-8. **Backend Profile Endpoint**: Enhanced updateUser controller
+8. **LoginPage**: ✅ Fully functional
+   - Single identifier field (accepts username OR email)
+   - Zod validation
+   - react-hook-form integration
+   - API integration with error handling
+   - Redux dispatch on success
+   - Navigation to `/feed`
+   - Toast notifications
+   - Link to signup page
+   - Matches design system
+9. **Session Persistence**: ✅ Fully functional
+   - Backend `/api/auth/me` endpoint
+   - AuthProvider component checks auth on app load
+   - Restores Redux state from valid cookies
+   - Shows loading spinner during check
+   - Automatic session restoration after refresh
+10. **Protected Routes**: ✅ Fully functional
+   - ProtectedRoute component guards authenticated routes
+   - Checks Redux for user before rendering
+   - Instant redirect to `/login` if unauthorized
+   - Wraps `/feed` and `/signup/complete` routes
+   - Uses `replace` prop to prevent back button issues
+   - Clean UX with no flash of unauthorized content
+11. **FeedPage Stub**: ✅ Created
+   - Basic feed layout displaying user's name
+   - Logout button with proper styling (red, top-right)
+   - Placeholder for future feed content
+   - Demonstrates protected route working correctly
+12. **Logout Functionality**: ✅ Fully functional
+   - Backend properly clears cookies with matching options
+   - Frontend clears Redux state and redirects
+   - Toast notification on successful logout
+   - Error handling for failed logout attempts
+   - Session correctly ends (no restore on refresh)
+13. **Auth Page Redirects**: ✅ Fully functional
+   - Logged-in users auto-redirect from `/login` and `/signup` to `/feed`
+   - Prevents confusion and double login attempts
+   - Works with manual navigation and page refreshes
+14. **Backend Profile Endpoint**: Enhanced updateUser controller
    - New route: `PUT /users/complete-profile/:id`
    - Handles avatar upload via multer + optional text fields
    - Cloudinary integration for avatar storage
    - Old avatar cleanup before new upload
-9. **Design System**: Consistent indigo-purple gradient theme across pages
+15. **Cross-Origin Authentication**: ✅ Working
+   - Cookie sameSite configuration (none for production, lax for dev)
+   - NODE_ENV properly set on Render
+   - Cookies sent with all cross-origin requests
+   - Logout properly clears cookies with matching options
+16. **Design System**: Consistent indigo-purple gradient theme across all auth pages
 
 ### ⚠️ Known Issues
 - **CSS Warnings** in `index.css`: Unknown at-rules `@custom-variant`, `@theme`, `@apply` (Tailwind v4 + shadcn setup - these are expected and don't affect functionality)
 
-### 🔄 In Progress / Pending
-- **LoginPage**: Stub only, needs full implementation with Zod
-- **Protected Routes**: Not implemented yet
-- **Session Persistence**: Not checking for existing cookies on app load
-- **Feed/Posts**: Not started
-- **Reusable Components**: Input/Button stubs exist but unused
+### 🔄 Next Steps / Pending
+- **Feed Page**: Build full feed structure with navbar and posts
+- **Posts**: Create Post component and post creation flow
+- **Profile Page**: User profile view and edit functionality
+- **Reusable Components**: Extract and build shared Input/Button components
 
-### 📈 Progress: ~75% of Auth Flow Complete
+### 📈 Progress: 100% of Auth Flow Complete ✅
 - ✅ User registration (Step 1) - Fully functional
-- ✅ Profile completion (Step 2) - Fully functional with backend integration
-- ✅ Backend endpoints - Complete profile route added
-- ⏳ Login page - Needs implementation
-- ⏳ Protected routes - Needs implementation
-- ⏳ Session persistence - Needs implementation
+- ✅ Profile completion (Step 2) - Fully functional
+- ✅ Login page - Fully functional
+- ✅ Session persistence - Fully functional
+- ✅ Protected routes - Fully functional
+- ✅ Logout functionality - Fully functional
+- ✅ Auth page redirects - Fully functional
+- ✅ Cookie-based authentication - Working cross-origin
 
 ---
 
-**Last Updated:** November 5, 2025
+**Last Updated:** November 7, 2025
+

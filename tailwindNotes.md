@@ -221,4 +221,106 @@ This section documents every Tailwind utility used in `src/features/auth/SignupP
   - Background: Subtle gradient (indigo-50 → white → purple-50)
   - Shadows: Indigo-tinted for cohesion (indigo-200 for card, indigo-500/50 for button glow)
 
-**Last Updated:** November 5, 2025
+---
+
+## 🔐 LoginPage - Utilities used
+
+This section documents Tailwind utilities specific to `src/features/auth/LoginPage.jsx`.
+
+| Class | CSS | Purpose / Why used |
+|------|-----|--------------------|
+| `mb-2` | margin-bottom: 0.5rem | Small spacing between heading and subtitle |
+| `mb-6` | margin-bottom: 1.5rem | Larger spacing after subtitle before form |
+| `mt-4` | margin-top: 1rem | Spacing above "Don't have an account?" link |
+| `text-center` | text-align: center | Centers heading and subtitle text |
+| `text-sm` | font-size: 0.875rem | Smaller font for signup link (secondary action) |
+| `hover:text-indigo-700` | hover color change | Darker indigo on hover for link affordance |
+
+**Notes:**
+- LoginPage uses the same design system as SignupPage (indigo-purple gradient theme)
+- Reuses most utilities from SignupPage (flex centering, gradient backgrounds, form inputs)
+- Only unique utilities are documented here
+- Main differences: Simplified validation (no confirmPassword), single identifier field
+
+---
+
+## 🔄 AuthProvider - Loading Spinner Utilities
+
+This section documents Tailwind utilities used for the loading state in `src/features/auth/AuthProvider.jsx`.
+
+| Class | CSS | Purpose / Why used |
+|------|-----|--------------------|
+| `inline-block` | display: inline-block | Allows animation on span element |
+| `h-12` | height: 3rem | Sets spinner size (48px) |
+| `w-12` | width: 3rem | Sets spinner size (48px) |
+| `animate-spin` | animation: spin | Built-in Tailwind animation for rotating spinner |
+| `rounded-full` | border-radius: 9999px | Makes square div into perfect circle |
+| `border-4` | border-width: 4px | Thickness of spinner ring |
+| `border-solid` | border-style: solid | Solid border for spinner |
+| `border-indigo-600` | border-color: indigo-600 | Primary brand color for spinner |
+| `border-r-transparent` | border-right-color: transparent | Transparent right border creates spinning effect |
+
+**How the spinner works:**
+1. Square div with equal width/height (`h-12 w-12`)
+2. Made circular with `rounded-full`
+3. Thick border (`border-4 border-solid border-indigo-600`)
+4. Right border made transparent (`border-r-transparent`) creates gap
+5. `animate-spin` rotates the element, creating spinning animation
+6. Result: Classic loading spinner in brand color
+
+**Usage context:**
+- Shown while AuthProvider checks for existing session on app load
+- Prevents flash of logged-out state
+- Better UX than rendering app immediately with wrong auth state
+
+---
+
+## 📰 FeedPage - Utilities used
+
+This section documents Tailwind utilities used for the feed page stub in `src/features/feed/FeedPage.jsx`.
+
+| Class | CSS | Purpose / Why used |
+|------|-----|--------------------|
+| `bg-gray-50` | background-color: gray-50 | Very light gray background for page (softer than white) |
+| `p-8` | padding: 2rem | Page padding for breathing room |
+| `max-w-4xl` | max-width: 56rem | Constrains content width for readability (same as signup card) |
+| `mx-auto` | margin-left: auto; margin-right: auto | Centers content horizontally |
+| `flex` | display: flex | Creates flex container for header layout |
+| `justify-between` | justify-content: space-between | Pushes heading left and logout button right |
+| `items-center` | align-items: center | Vertically centers heading and button |
+| `text-3xl` | font-size: 1.875rem | Large heading size |
+| `text-gray-900` | color: gray-900 | Darkest gray for heading (strong contrast on light bg) |
+| `mb-4` | margin-bottom: 1rem | Spacing below heading |
+| `mb-6` | margin-bottom: 1.5rem | Larger spacing below header section |
+| `mt-2` | margin-top: 0.5rem | Small spacing above subtitle |
+| `bg-white` | background-color: white | White card background for content |
+| `rounded-lg` | border-radius: 0.5rem | Rounded corners for card |
+| `shadow` | box-shadow (default) | Subtle shadow for card elevation |
+| `p-6` | padding: 1.5rem | Internal card padding |
+| `text-gray-500` | color: gray-500 | Medium gray for body text |
+| `text-gray-400` | color: gray-400 | Lighter gray for secondary text |
+| `text-sm` | font-size: 0.875rem | Smaller text for secondary content |
+
+**Logout Button Utilities:**
+
+| Class | CSS | Purpose / Why used |
+|------|-----|--------------------|
+| `px-4` | padding-left/right: 1rem | Horizontal padding for button |
+| `py-2` | padding-top/bottom: 0.5rem | Vertical padding for button |
+| `bg-red-600` | background-color: red-600 | Red background (indicates destructive action) |
+| `text-white` | color: white | White text for contrast on red background |
+| `font-medium` | font-weight: 500 | Medium weight for button text |
+| `rounded-lg` | border-radius: 0.5rem | Rounded button corners |
+| `hover:bg-red-700` | hover background: red-700 | Darker red on hover for affordance |
+| `transition-colors` | transition: color/background | Smooth color transitions |
+| `duration-200` | transition-duration: 200ms | Fast transition timing |
+
+**Notes:**
+- FeedPage uses a different layout pattern than auth pages (full-width with max-width constraint)
+- No gradient backgrounds (cleaner, simpler feed layout)
+- Uses grayscale palette for content-focused design
+- **Logout button**: Red color follows UX convention for destructive/exit actions
+- Header uses flexbox with `justify-between` for classic "title left, actions right" pattern
+- Placeholder stub - will be replaced with actual feed content
+
+**Last Updated:** November 7, 2025

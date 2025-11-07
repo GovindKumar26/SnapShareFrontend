@@ -869,5 +869,330 @@ TanStack Query caches globally, so you only fetch once. But:
 
 ---
 
+- Nov 7, 2025 — **Feed Feature Implementation (Complete):** Built entire social feed with posts, likes, infinite scroll, and optimistic updates. Major milestone completing core app functionality.
+
+  **Backend Changes:**
+  - Enhanced `getAllPosts` controller to include `likedByMe` field for each post
+  - Query optimization: Single batch query to fetch user's likes for all posts on page
+  - Used MongoDB `$in` operator to check which posts current user has liked
+  - Added same `likedByMe` enhancement to `getUserPosts` endpoint
+  - Result: Backend now provides complete post state including user's interaction status
+  
+  **Frontend Components Created:**
+  - `api/posts.js` - API service layer for all post-related endpoints
+  - `components/PostCard.jsx` - Full post display with image, title, caption, author, interactions
+  - `components/PostSkeleton.jsx` - Beautiful loading skeleton with animations
+  - `features/feed/CreatePost.jsx` - Modal form for creating posts with image upload
+  - `features/feed/FeedPage.jsx` - Main feed container with infinite scroll
+  
+  **Key Features Implemented:**
+  1. **Post Creation:**
+     - Modal dialog with react-hook-form + Zod validation
+     - Required: Title (1-100 chars) + Image (max 5MB)
+     - Optional: Caption (max 500 chars)
+     - Image upload with FileReader preview
+     - FormData submission to backend (multipart/form-data)
+     - Optimistic UI: Post appears instantly before API response
+     - Validation: File type checking (JPEG, PNG, WebP, GIF only)
+     - DialogDescription added for accessibility compliance
+  
+  2. **Feed Display:**
+     - useInfiniteQuery with page-based pagination (page/limit params)
+     - Initial load: 10 posts per page
+     - PostSkeleton shown during loading (3 instances)
+     - Empty state with friendly message
+     - Error state with retry button
+     - Load More button at bottom (infinite scroll pattern)
+  
+  3. **Post Card UI:**
+     - Full-width image display with loading state
+     - Title (bold heading) + optional caption
+     - Author info: Avatar + username + relative timestamp (using date-fns)
+     - Like button with count (heart icon fills red when liked)
+     - Comment count placeholder (future feature)
+     - Delete menu (three-dot dropdown, only visible to post author)
+     - Confirm dialog before delete
+  
+  4. **Like System (Persistent):**
+     - Toggle like/unlike with optimistic UI update
+     - Heart icon instantly changes color (red = liked, outline = not liked)
+     - Like count updates immediately
+     - Backend tracks likes in Likes collection
+     - **Critical Fix:** Backend returns `likedByMe` boolean for each post
+     - Frontend uses `post.likedByMe` from server (not local state)
+     - Result: Likes persist across page refreshes ✅
+     - Rollback on error if API call fails
+  
+  5. **Delete Functionality:**
+     - Author-only permission check (menu only shows for own posts)
+     - Browser confirm dialog: "Are you sure?"
+     - Optimistic removal from feed
+     - Backend cascade delete: Post + image + likes + comments
+     - Toast notification on success/error
+  
+  6. **Pagination:**
+     - Backend: Page-based with query params `?page=1&limit=10`
+     - Frontend: useInfiniteQuery with getNextPageParam
+     - Fetches next page when user clicks "Load More"
+     - Shows loading spinner during fetch
+     - Disables button while loading
+     - No more pages: Button hidden automatically
+  
+  **TanStack Query Patterns Used:**
+  
+  1. **useInfiniteQuery** (Feed Data Fetching):
+     ```javascript
+     const { data, fetchNextPage, hasNextPage, isLoading } = useInfiniteQuery({
+       queryKey: ['posts'],  // Cache key
+       queryFn: ({ pageParam = 1 }) => postsApi.fetchPosts({ page: pageParam, limit: 10 }),
+       getNextPageParam: (lastPage) => {
+         // Determines if there's a next page
+         return lastPage.data.pagination.hasNextPage 
+           ? lastPage.data.pagination.currentPage + 1 
+           : undefined;
+       },
+       staleTime: 1000 * 60 * 5,  // 5 minutes - data stays "fresh"
+     });
+     ```
+     - **queryKey**: Unique identifier for cache bucket `['posts']`
+     - **queryFn**: Function that fetches data (receives pageParam for pagination)
+     - **getNextPageParam**: Returns next page number or undefined if no more pages
+     - **staleTime**: How long data stays "fresh" before refetching
+       - Within 5 min: Uses cached data (no API call)
+       - After 5 min: Refetches in background while showing old data
+     - **data structure**: `{ pages: [page1, page2, ...], pageParams: [1, 2, ...] }`
+     - **fetchNextPage()**: Manually trigger next page fetch (called by "Load More" button)
+     - **hasNextPage**: Boolean indicating if more data available
+  
+  2. **useMutation** (Create/Like/Delete Actions):
+     ```javascript
+     const createPostMutation = useMutation({
+       mutationFn: postsApi.createPost,  // API function to call
+       onMutate: async (formData) => {
+         // Runs BEFORE API call (optimistic update)
+         await queryClient.cancelQueries(['posts']);  // Cancel ongoing fetches
+         const previousPosts = queryClient.getQueryData(['posts']);  // Snapshot
+         
+         // Update cache immediately
+         queryClient.setQueryData(['posts'], (old) => ({
+           ...old,
+           pages: [{ ...old.pages[0], posts: [tempPost, ...old.pages[0].posts] }]
+         }));
+         
+         return { previousPosts };  // Context for rollback
+       },
+       onSuccess: (response, variables, context) => {
+         // Replace temp post with real post from server
+         queryClient.setQueryData(['posts'], ...);
+         toast.success('Post created successfully!');
+       },
+       onError: (error, variables, context) => {
+         // Rollback to previous state
+         queryClient.setQueryData(['posts'], context.previousPosts);
+         toast.error('Failed to create post');
+       },
+     });
+     ```
+     - **mutationFn**: API function to execute
+     - **onMutate**: Runs BEFORE API call (optimistic update)
+       - Cancel ongoing queries to prevent race conditions
+       - Snapshot previous data for rollback
+       - Update cache immediately (user sees change instantly)
+       - Return context object for onSuccess/onError
+     - **onSuccess**: Runs after API succeeds
+       - Replace optimistic data with real server data
+       - Show success toast
+     - **onError**: Runs if API fails
+       - Rollback cache to previous state
+       - Show error toast
+  
+  3. **Query Cache Manipulation**:
+     ```javascript
+     // Get current cache data
+     const previousPosts = queryClient.getQueryData(['posts']);
+     
+     // Update cache
+     queryClient.setQueryData(['posts'], (old) => ({
+       ...old,
+       pages: old.pages.map(page => ({
+         ...page,
+         data: {
+           ...page.data,
+           posts: page.data.posts.map(post =>
+             post._id === postId ? { ...post, likedByMe: true } : post
+           )
+         }
+       }))
+     }));
+     
+     // Invalidate cache (mark as stale, trigger refetch)
+     queryClient.invalidateQueries(['posts']);
+     
+     // Cancel ongoing fetches
+     await queryClient.cancelQueries(['posts']);
+     ```
+     - **getQueryData**: Read current cache value
+     - **setQueryData**: Update cache manually
+     - **invalidateQueries**: Mark data as stale, trigger refetch
+     - **cancelQueries**: Cancel in-flight requests (prevent race conditions)
+  
+  4. **Optimistic Updates Pattern**:
+     - User clicks like → UI updates instantly (heart turns red)
+     - API call happens in background
+     - If success: Keep optimistic update
+     - If error: Rollback to previous state + show error
+     - Benefits: Instant UX, no waiting for API
+  
+  5. **Query Lifecycle**:
+     - **Component mounts** → queryFn triggered (if no cache or cache is stale)
+     - **Data arrives** → Saved to cache under queryKey
+     - **Within staleTime** (5 min) → Use cached data (no API call)
+     - **After staleTime** → Data marked "stale", refetch in background
+     - **Window focus** → Auto-refetch (can disable with `refetchOnWindowFocus: false`)
+     - **Manual trigger** → `invalidateQueries` or `refetch()`
+  
+  **Bug Fixes During Implementation:**
+  1. **File Input Not Working:**
+     - Problem: Spreading `{...field}` on file input prevented clicks
+     - Fix: Removed field spread from hidden file input in CreatePost
+  
+  2. **Like Button 400 Error:**
+     - Problem: `mutationFn: postsApi.toggleLike` received `{ postId, newLikedState }`
+     - API expected only `postId` string
+     - Fix: Changed to `mutationFn: ({ postId }) => postsApi.toggleLike(postId)`
+  
+  3. **Likes Not Persisting After Refresh:**
+     - Problem: Frontend tracked likes in local state Set (lost on refresh)
+     - Backend didn't return which posts user had liked
+     - Fix Part 1: Enhanced backend `getAllPosts` to return `likedByMe` field
+       - Batch query: `Like.find({ user: userId, post: { $in: postIds } })`
+       - Build Set of liked post IDs for O(1) lookup
+       - Add `likedByMe: likedPostIds.has(post._id)` to each post
+     - Fix Part 2: Frontend uses `post.likedByMe` from backend (not local state)
+     - Fix Part 3: Optimistic updates now also update `likedByMe` in cache
+     - Result: Likes persist across refreshes ✅
+  
+  **Performance Optimizations:**
+  - Batch like queries (single DB query for all posts on page)
+  - O(1) lookup using Set for likedPostIds
+  - Stale-while-revalidate: Show old data while fetching new
+  - Image lazy loading with loading state
+  - Optimistic updates reduce perceived latency
+  
+  **Data Flow Example (Creating a Post):**
+  1. User fills form and clicks submit
+  2. Validation runs (Zod schema)
+  3. onMutate: Create temp post, insert into cache → User sees post instantly
+  4. mutationFn: POST /api/posts with FormData
+  5. Backend: Save to DB, upload to Cloudinary, return post
+  6. onSuccess: Replace temp post with real post (has real _id now)
+  7. Toast: "Post created successfully!"
+  
+  **Data Flow Example (Liking a Post):**
+  1. User clicks heart icon
+  2. onMutate: Update cache → Heart turns red instantly, count increments
+  3. mutationFn: POST /api/likes/toggle { postId }
+  4. Backend: Create/delete Like document, update Post.likeCount
+  5. onSuccess: (nothing needed, already updated optimistically)
+  6. If error: Rollback cache → Heart returns to outline, count decrements, show toast
+  
+  **Files Modified/Created:**
+  - ✅ `frontend/src/api/posts.js` (new)
+  - ✅ `frontend/src/components/PostCard.jsx` (new)
+  - ✅ `frontend/src/components/PostSkeleton.jsx` (new)
+  - ✅ `frontend/src/features/feed/CreatePost.jsx` (new)
+  - ✅ `frontend/src/features/feed/FeedPage.jsx` (replaced stub with full implementation)
+  - ✅ `backend/controller/postController.js` (enhanced getAllPosts + getUserPosts)
+  
+  **Dependencies Verified:**
+  - ✅ date-fns (already installed, version 4.1.0)
+  - ✅ @tanstack/react-query (already installed)
+  - ✅ lucide-react (icons)
+  - ✅ shadcn/ui components (Dialog, Card, Avatar, Button, etc.)
+  
+  **Status:** ✅ Complete and fully functional (pending backend deployment for likedByMe support)
+  - Create post: ✅ Working
+  - View feed: ✅ Working
+  - Like/unlike: ✅ Working (with optimistic updates)
+  - Delete post: ✅ Working (author only)
+  - Load more pagination: ✅ Working
+  - Persistent likes: ✅ Working locally (requires backend deployment to production)
+  
+  **Next Step:** Deploy backend changes to Render so `likedByMe` works on production
+
+---
+
+- Nov 7, 2025 — **Default Avatar Implementation:** Replaced unreliable Cloudinary demo URL with UI Avatars service to ensure all users have professional-looking avatars, whether they upload one or not.
+
+  **Problem:** Users without uploaded avatars had a broken/unreliable Cloudinary demo URL as default, resulting in missing profile pictures and poor UX.
+
+  **Solution:** Implemented UI Avatars (https://ui-avatars.com/) service that generates personalized avatars on-the-fly based on user's name.
+
+  **Backend Changes:**
+  
+  1. **Updated `controller/register.js`:**
+     - Removed hardcoded `DEFAULT_AVATAR_URL` constant
+     - Created `generateDefaultAvatar(displayName, username)` helper function
+     - Function generates URL with user's initials and random background color
+     - URL format: `https://ui-avatars.com/api/?name={name}&size=200&background=random&color=fff&bold=true`
+     - Applied to registration: `avatarUrl = req.file ? req.file.path : generateDefaultAvatar(displayName, username)`
+  
+  2. **Updated `controller/getCurrentUser.js`:**
+     - Added same `generateDefaultAvatar()` helper function
+     - Enhanced response to provide default avatar if user has none
+     - Changed: `avatarUrl: user.avatarUrl || generateDefaultAvatar(user.displayName, user.username)`
+     - Ensures `/api/auth/me` always returns a valid avatar URL
+  
+  3. **Updated `controller/userController.js`:**
+     - Added `generateDefaultAvatar()` helper at top of file
+     - Enhanced `getUser()` to provide default avatar if missing
+     - Enhanced `searchUsers()` to map all users with default avatars
+     - Enhanced `getAllUsers()` to map all users with default avatars
+     - Pattern used:
+       ```javascript
+       const userObj = user.toObject();
+       if (!userObj.avatarUrl) {
+         userObj.avatarUrl = generateDefaultAvatar(user.displayName, user.username);
+       }
+       ```
+  
+  **UI Avatars Features:**
+  - **Personalized Initials:** Shows first letters of display name or username
+  - **Random Colors:** Different background color for each user (consistent per name)
+  - **High Quality:** 200x200 pixel images (perfect for profile pictures)
+  - **Professional Look:** White text on colored background with bold font
+  - **No External Dependencies:** Free service, no API key required
+  - **Instant Generation:** No storage needed, generated on-demand
+  
+  **Example Avatars Generated:**
+  - Display name "John Doe" → Initials "JD" on random colored background
+  - Username "alice123" → Initials "A1" on random colored background
+  - Single word "Alex" → Initial "A" on random colored background
+  
+  **Benefits:**
+  1. **Consistent UX:** Every user always has a visible avatar
+  2. **No Broken Images:** No more 404 errors or missing profile pictures
+  3. **Personalization:** Each user gets unique avatar based on their name
+  4. **Professional Appearance:** App looks polished even for new users
+  5. **Zero Storage Cost:** Avatars generated on-the-fly, no Cloudinary storage used
+  6. **Backwards Compatible:** Works for existing users without avatars
+  
+  **Files Modified:**
+  - ✅ `backend/controller/register.js` (generateDefaultAvatar helper + registration logic)
+  - ✅ `backend/controller/getCurrentUser.js` (generateDefaultAvatar helper + response enhancement)
+  - ✅ `backend/controller/userController.js` (generateDefaultAvatar helper + 3 endpoints enhanced)
+  
+  **Status:** ✅ Complete - All endpoints now provide default avatars
+  
+  **Next Steps:** 
+  - Deploy backend to Render with both `likedByMe` and default avatar changes
+  - Test with newly registered users (no avatar upload)
+  - Verify existing users without avatars now show generated avatars
+
+---
+
 **Last Updated:** November 7, 2025
+
+
+````
 
